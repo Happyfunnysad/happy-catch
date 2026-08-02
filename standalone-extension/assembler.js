@@ -8,6 +8,7 @@
   const retryButton = document.querySelector('#retry');
   const closeButton = document.querySelector('#close');
   const jobId = new URL(location.href).searchParams.get('job');
+  const DOWNLOAD_TIMEOUT_MS = 30 * 60 * 1000;
   let currentJob = null;
   let headerRuleIds = [];
 
@@ -19,6 +20,10 @@
 
   function setProgress(done, total) {
     progress.value = total ? done / total : 0;
+  }
+
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   function safeRequestHeaders(resource, extra = {}) {
@@ -114,16 +119,79 @@
     return { root, handle, writable, name };
   }
 
+  async function startBrowserDownload(url, filename) {
+    const response = await chrome.runtime.sendMessage({
+      type: 'SAVE_OUTPUT',
+      url,
+      filename,
+    });
+    if (!response?.ok || !Number.isInteger(response.downloadId)) {
+      throw new Error(response?.error || 'Service worker не запустил загрузку');
+    }
+    return response.downloadId;
+  }
+
+  async function waitForBrowserDownload(downloadId, filename) {
+    const deadline = Date.now() + DOWNLOAD_TIMEOUT_MS;
+    let missingPolls = 0;
+    while (Date.now() < deadline) {
+      let response;
+      try {
+        response = await chrome.runtime.sendMessage({
+          type: 'GET_DOWNLOAD_STATUS',
+          downloadId,
+        });
+      } catch (_) {
+        await sleep(500);
+        continue;
+      }
+
+      if (!response?.ok) throw new Error(response?.error || 'Не удалось проверить загрузку');
+      if (response.state === 'complete') {
+        setProgress(1, 1);
+        summary.textContent = `Скачивание завершено: ${filename}`;
+        return response;
+      }
+      if (response.state === 'interrupted') {
+        throw new Error(`Загрузка прервана${response.error ? `: ${response.error}` : ''}`);
+      }
+      if (response.state === 'missing') {
+        missingPolls += 1;
+        if (missingPolls >= 10) throw new Error('Chrome потерял созданную загрузку');
+      } else {
+        missingPolls = 0;
+      }
+
+      const received = Number(response.bytesReceived || 0);
+      const total = Number(response.totalBytes || 0);
+      if (total > 0) {
+        setProgress(received, total);
+        summary.textContent = `Скачивание: ${(received / 1024 / 1024).toFixed(1)} / ${(total / 1024 / 1024).toFixed(1)} МБ`;
+      } else {
+        summary.textContent = `Скачивание запущено: ${filename}`;
+      }
+      await sleep(500);
+    }
+    throw new Error('Таймаут ожидания загрузки браузера');
+  }
+
   async function finishOutput(output) {
     await output.writable.close();
     const file = await output.handle.getFile();
+    if (!file.size) throw new Error('Собран пустой файл');
+
     const url = URL.createObjectURL(file);
-    await chrome.downloads.download({ url, filename: output.name, saveAs: true });
-    setTimeout(async () => {
+    let completed = false;
+    try {
+      const downloadId = await startBrowserDownload(url, output.name);
+      log(`Chrome download #${downloadId} запущен: ${output.name}`);
+      await waitForBrowserDownload(downloadId, output.name);
+      completed = true;
+      return file.size;
+    } finally {
       URL.revokeObjectURL(url);
-      await output.root.removeEntry(output.name).catch(() => {});
-    }, 10 * 60 * 1000);
-    return file.size;
+      if (completed) await output.root.removeEntry(output.name).catch(() => {});
+    }
   }
 
   async function decryptAes128(bytes, keyBytes, ivBytes) {
@@ -320,13 +388,13 @@
     if (!assembled) throw new Error('Не найден пригодный manifest, range-файл или последовательность сегментов');
 
     progress.value = 1;
-    summary.textContent = 'Готово. Файл передан в загрузки браузера.';
+    summary.textContent = 'Готово. Файл полностью сохранён браузером.';
     await chrome.runtime.sendMessage({ type: 'ASSEMBLY_DONE', jobId, ok: true }).catch(() => {});
   }
 
   async function fail(error) {
     log(`ОШИБКА: ${error.message || error}`);
-    summary.textContent = 'Сборка завершилась ошибкой.';
+    summary.textContent = 'Сборка или скачивание завершились ошибкой.';
     retryButton.hidden = false;
     await chrome.runtime.sendMessage({ type: 'ASSEMBLY_DONE', jobId, ok: false, error: String(error.message || error) }).catch(() => {});
   }

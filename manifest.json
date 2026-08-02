@@ -18,7 +18,7 @@
   "manifest_version": 3,
   "minimum_chrome_version": "93",
   "name": "__MSG_catCatch__",
-  "homepage_url": "https://github.com/Happyfunnysad/happy-catch",
+  "homepage_url": "https://github.com/xifangczy/cat-catch",
   "options_ui": {
     "page": "options.html",
     "open_in_tab": true
@@ -73,25 +73,13 @@
         "http://*/*"
       ],
       "js": [
-        "js/content-script.js",
-        "js/fragment-pipeline-bootstrap.js"
+        "js/content-script.js"
       ],
       "run_at": "document_start",
       "all_frames": true
     }
   ],
-  "web_accessible_resources": [
-    {
-      "resources": [
-        "catch-script/i18n.js",
-        "catch-script/recorder.js"
-      ],
-      "matches": [
-        "<all_urls>"
-      ]
-    }
-  ],
   "default_locale": "en",
-  "version": "2.7.3",
+  "version": "2.7.2",
   "incognito": "split"
 }

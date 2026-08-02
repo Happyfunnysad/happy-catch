@@ -51,6 +51,12 @@ const groups = Core.groupRawResources([
 ]);
 assert.strictEqual(groups[0].items.length, 2);
 
+const merged = Core.dedupeResources([
+  { url: 'https://x.test/blob', timeStamp: 1, kind: 'other', synthetic: true },
+  { url: 'https://x.test/blob', timeStamp: 2, kind: 'segment', contentType: 'application/octet-stream' },
+]);
+assert.strictEqual(merged[0].kind, 'segment');
+
 for (const file of ['service-worker.js', 'content-script.js', 'popup.js', 'assembler.js']) {
   const source = fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
   new Function(source);

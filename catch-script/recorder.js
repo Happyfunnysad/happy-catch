@@ -431,6 +431,11 @@
 
     async function bootCoordinator() {
         const list = await waitForMedia(document, 30000).catch(() => []);
+        if (!list.length && window.top !== window) {
+            globalThis.__happyCatchFragmentPipelineLoaded = false;
+            return;
+        }
+
         const panel = createPanel();
         if (!panel) return;
         fillMedia(panel, list);
@@ -447,9 +452,7 @@
         };
         panel.querySelector('[data-action="start"]').onclick = async () => {
             try {
-                const current = mediaElements();
-                fillMedia(panel, current);
-                await runCoordinator(panel, current);
+                await runCoordinator(panel, mediaElements());
             } catch (error) {
                 panel.querySelector('.status').textContent = String(error && error.message || error);
                 panel.querySelector('[data-action="start"]').disabled = false;

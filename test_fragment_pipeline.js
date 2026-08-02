@@ -51,5 +51,16 @@ assert.strictEqual(core.clampNumber('nope', 1, 6, 2), 2);
 assert.match(recorderSource, /Promise\.allSettled/, 'worker queues must run concurrently');
 assert.match(recorderSource, /const missing = ranges\.filter/, 'missing remote fragments need a local fallback');
 assert.match(recorderSource, /concatOrder/, 'ordered FFmpeg merge metadata is missing');
+assert.match(recorderSource, /catCatchCloseScript/, 'closing the panel must release Cat Catch script state');
+assert.doesNotMatch(
+    recorderSource,
+    /const current = mediaElements\(\);\s*fillMedia\(panel, current\)/,
+    'start must not overwrite the selected media or time range',
+);
+assert.match(
+    recorderSource,
+    /!list\.length && window\.top !== window/,
+    'empty child frames must not create duplicate panels',
+);
 
 console.log('fragment pipeline: ok');

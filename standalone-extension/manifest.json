@@ -9,7 +9,7 @@
     "default_popup": "popup.html"
   },
   "background": {
-    "service_worker": "background-entry.js"
+    "service_worker": "service-worker.js"
   },
   "permissions": [
     "tabs",

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Seek Fragment Capture</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Seek Fragment Capture</h1>
+      <p>Граница буфера → перехват сетевых фрагментов → сборка файла</p>
+    </header>
+
+    <label>Плеер
+      <select id="media"></select>
+    </label>
+
+    <div class="grid">
+      <label>Начало, сек <input id="start" type="number" min="0" step="1" value="0"></label>
+      <label>Конец, сек <input id="end" type="number" min="0" step="1"></label>
+      <label>Резервный шаг, сек <input id="step" type="number" min="1" max="120" step="1" value="8"></label>
+      <label>Мин. ожидание, мс <input id="minDwell" type="number" min="250" max="10000" step="50" value="350"></label>
+      <label>Тишина сети, мс <input id="quiet" type="number" min="250" max="10000" step="50" value="350"></label>
+      <label>Макс. ожидание, мс <input id="maxDwell" type="number" min="1000" max="30000" step="250" value="2500"></label>
+    </div>
+
+    <div class="actions">
+      <button id="startCapture" class="primary">Запустить</button>
+      <button id="stopCapture" disabled>Остановить</button>
+      <button id="refresh">Обновить</button>
+    </div>
+
+    <progress id="progress" max="1" value="0"></progress>
+    <div id="status" class="status">Ищу HTML5-плеер…</div>
+    <div class="note">Основной переход идёт к краю уже загруженного буфера. Резервный шаг используется только если плеер не сообщает buffered-диапазоны.</div>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

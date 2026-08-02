@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Seek Fragment Capture",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Перематывает HTML5-плеер, перехватывает реальные сетевые фрагменты и собирает файл.",
   "minimum_chrome_version": "109",
   "action": {

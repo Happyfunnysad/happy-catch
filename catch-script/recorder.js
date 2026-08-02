@@ -4,10 +4,6 @@
     if (globalThis.__happyCatchFragmentPipelineLoaded) return;
     globalThis.__happyCatchFragmentPipelineLoaded = true;
 
-    const WORKER_PARAM = '__happy_catch_worker';
-    const PIPELINE_VERSION = 1;
-    const workerToken = new URL(location.href).searchParams.get(WORKER_PARAM);
-
     // PIPELINE_CORE_START
     function clampNumber(value, min, max, fallback) {
         const n = Number(value);
@@ -68,27 +64,50 @@
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
     function uniqueId() {
-        if (crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+        if (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') {
+            return globalThis.crypto.randomUUID();
+        }
         return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     }
 
-    function mediaElements() {
-        return [...document.querySelectorAll('video, audio')].filter((media) => {
-            return Boolean(
-                media.currentSrc || media.src || media.readyState >= 1 ||
-                Number.isFinite(media.duration) || media.videoWidth || media.videoHeight
-            );
-        });
+    function mediaElementsFrom(root) {
+        if (!root || typeof root.querySelectorAll !== 'function') return [];
+        return [...root.querySelectorAll('video, audio')].filter((media) => Boolean(
+            media.currentSrc || media.src || media.readyState >= 1 ||
+            Number.isFinite(media.duration) || media.videoWidth || media.videoHeight
+        ));
     }
 
-    async function waitForMedia(timeout = 30000) {
+    function mediaElements() {
+        return mediaElementsFrom(document);
+    }
+
+    async function waitForMedia(root = document, timeout = 30000) {
         const deadline = Date.now() + timeout;
         while (Date.now() < deadline) {
-            const list = mediaElements();
+            const list = mediaElementsFrom(root);
             if (list.length) return list;
             await sleep(250);
         }
         throw new Error('Медиаэлемент не найден');
+    }
+
+    async function waitForWindowMedia(opened, mediaIndex, timeout = 45000) {
+        const deadline = Date.now() + timeout;
+        let lastError = null;
+        while (Date.now() < deadline) {
+            if (!opened || opened.closed) throw new Error('Вкладка worker закрыта');
+            try {
+                const doc = opened.document;
+                const list = mediaElementsFrom(doc);
+                if (list.length) return list[mediaIndex] || list[0];
+            } catch (error) {
+                lastError = error;
+            }
+            await sleep(300);
+        }
+        if (lastError) throw new Error('Вкладка worker изолирована политикой сайта');
+        throw new Error('Видео во вкладке worker не загрузилось');
     }
 
     function captureStream(media) {
@@ -100,19 +119,20 @@
     function once(target, event, timeout = 15000) {
         return new Promise((resolve, reject) => {
             let timer;
-            const done = (value, error) => {
+            const onEvent = (value) => finish(value, null);
+            const finish = (value, error) => {
                 clearTimeout(timer);
                 target.removeEventListener(event, onEvent);
                 error ? reject(error) : resolve(value);
             };
-            const onEvent = (value) => done(value);
             target.addEventListener(event, onEvent, { once: true });
-            timer = setTimeout(() => done(null, new Error(`Таймаут события ${event}`)), timeout);
+            timer = setTimeout(() => finish(null, new Error(`Таймаут события ${event}`)), timeout);
         });
     }
 
     async function seekMedia(media, time) {
-        const target = Math.max(0, Math.min(Number.isFinite(media.duration) ? media.duration : time, time));
+        const duration = Number.isFinite(media.duration) ? media.duration : time;
+        const target = Math.max(0, Math.min(duration, time));
         if (Math.abs(media.currentTime - target) < 0.15) return;
         const wait = once(media, 'seeked', 20000).catch(() => null);
         media.currentTime = target;
@@ -123,12 +143,8 @@
         const mimeType = chooseMime(media);
         const options = {};
         if (mimeType) options.mimeType = mimeType;
-        if (media.tagName === 'AUDIO') {
-            options.audioBitsPerSecond = settings.audioBits;
-        } else {
-            options.audioBitsPerSecond = settings.audioBits;
-            options.videoBitsPerSecond = settings.videoBits;
-        }
+        options.audioBitsPerSecond = settings.audioBits;
+        if (media.tagName !== 'AUDIO') options.videoBitsPerSecond = settings.videoBits;
         return options;
     }
 
@@ -142,59 +158,68 @@
             playbackRate: media.playbackRate,
             loop: media.loop,
         };
-
-        media.loop = false;
-        media.pause();
-        media.playbackRate = 1;
-        media.muted = true;
-        await seekMedia(media, range.start);
-
-        const stream = captureStream(media);
+        let stream = null;
+        let recorder = null;
         const chunks = [];
-        const recorder = new MediaRecorder(stream, recorderOptions(media, settings));
-        runtime.activeRecorder = recorder;
-
-        const stopped = new Promise((resolve, reject) => {
-            recorder.ondataavailable = (event) => {
-                if (event.data && event.data.size) chunks.push(event.data);
-            };
-            recorder.onerror = (event) => reject(event.error || new Error('MediaRecorder завершился с ошибкой'));
-            recorder.onstop = resolve;
-        });
-
-        const expectedMs = Math.max(1000, (range.end - range.start) * 1000);
-        const hardDeadline = Date.now() + expectedMs * 3 + 30000;
-        recorder.start(1000);
 
         try {
-            await media.play();
-            while (!runtime.cancelled && media.currentTime < range.end - 0.08) {
-                if (Date.now() > hardDeadline) throw new Error(`Фрагмент ${range.index}: видео не продвигается`);
-                if (media.ended) break;
-                await sleep(100);
+            media.loop = false;
+            media.pause();
+            media.playbackRate = 1;
+            // Мутирование разрешает autoplay в фоновой вкладке. captureStream
+            // продолжает отдавать аудиодорожку, меняется только локальный вывод.
+            media.muted = true;
+            await seekMedia(media, range.start);
+
+            stream = captureStream(media);
+            recorder = new MediaRecorder(stream, recorderOptions(media, settings));
+            runtime.activeRecorder = recorder;
+
+            const stopped = new Promise((resolve, reject) => {
+                recorder.ondataavailable = (event) => {
+                    if (event.data && event.data.size) chunks.push(event.data);
+                };
+                recorder.onerror = (event) => reject(event.error || new Error('MediaRecorder завершился с ошибкой'));
+                recorder.onstop = resolve;
+            });
+
+            const expectedMs = Math.max(1000, (range.end - range.start) * 1000);
+            const hardDeadline = Date.now() + expectedMs * 3 + 30000;
+            recorder.start(1000);
+
+            try {
+                await media.play();
+                while (!runtime.cancelled && media.currentTime < range.end - 0.08) {
+                    if (Date.now() > hardDeadline) throw new Error(`Фрагмент ${range.index + 1}: видео не продвигается`);
+                    if (media.ended) break;
+                    await sleep(100);
+                }
+            } finally {
+                if (recorder.state !== 'inactive') recorder.stop();
             }
+
+            await stopped;
+            if (runtime.cancelled) throw new Error('Захват отменён');
+
+            const type = recorder.mimeType || chunks[0]?.type || chooseMime(media) || 'video/webm';
+            const blob = new Blob(chunks, { type });
+            if (!blob.size) throw new Error(`Фрагмент ${range.index + 1}: пустой результат`);
+            return blob;
         } finally {
-            if (recorder.state !== 'inactive') recorder.stop();
+            runtime.activeRecorder = null;
+            if (recorder && recorder.state !== 'inactive') {
+                try { recorder.stop(); } catch (_) {}
+            }
+            if (stream) stream.getTracks().forEach((track) => track.stop());
+            try { media.pause(); } catch (_) {}
+            try { media.muted = previous.muted; } catch (_) {}
+            try { media.playbackRate = previous.playbackRate; } catch (_) {}
+            try { media.loop = previous.loop; } catch (_) {}
+            if (!runtime.remote) {
+                try { await seekMedia(media, previous.time); } catch (_) {}
+                if (!previous.paused) media.play().catch(() => {});
+            }
         }
-
-        await stopped;
-        runtime.activeRecorder = null;
-        stream.getTracks().forEach((track) => track.stop());
-
-        media.pause();
-        media.muted = previous.muted;
-        media.playbackRate = previous.playbackRate;
-        media.loop = previous.loop;
-        if (!runtime.workerMode) {
-            try { await seekMedia(media, previous.time); } catch (_) {}
-            if (!previous.paused) media.play().catch(() => {});
-        }
-
-        if (runtime.cancelled) throw new Error('Захват отменён');
-        const type = recorder.mimeType || chunks[0]?.type || chooseMime(media) || 'video/webm';
-        const blob = new Blob(chunks, { type });
-        if (!blob.size) throw new Error(`Фрагмент ${range.index}: пустой результат`);
-        return blob;
     }
 
     async function recordWithRetry(media, range, settings, runtime, onAttempt) {
@@ -209,110 +234,11 @@
                 await sleep(500 * attempt);
             }
         }
-        throw error || new Error(`Фрагмент ${range.index} не записан`);
-    }
-
-    function parseWorkerToken(token) {
-        if (!token) return null;
-        const [taskId, workerId] = token.split(':');
-        if (!taskId || !/^\d+$/.test(workerId || '')) return null;
-        return { taskId, workerId: Number(workerId) };
-    }
-
-    async function runWorker(token) {
-        const parsed = parseWorkerToken(token);
-        if (!parsed || typeof BroadcastChannel !== 'function') return;
-
-        const nonce = uniqueId();
-        const channel = new BroadcastChannel(`happy-catch:${parsed.taskId}`);
-        const runtime = { cancelled: false, activeRecorder: null, workerMode: true };
-        let bound = false;
-
-        channel.onmessage = async ({ data }) => {
-            if (!data || data.version !== PIPELINE_VERSION || data.taskId !== parsed.taskId) return;
-            if (data.type === 'cancel') {
-                runtime.cancelled = true;
-                if (runtime.activeRecorder && runtime.activeRecorder.state !== 'inactive') runtime.activeRecorder.stop();
-                return;
-            }
-            if (data.type !== 'assign' || data.workerId !== parsed.workerId || data.nonce !== nonce || bound) return;
-            bound = true;
-
-            try {
-                const list = await waitForMedia(45000);
-                const media = list[data.mediaIndex] || list[0];
-                if (!media) throw new Error('Видео для worker не найдено');
-
-                for (const range of data.ranges) {
-                    const blob = await recordWithRetry(media, range, data.settings, runtime, (attempt) => {
-                        channel.postMessage({
-                            version: PIPELINE_VERSION,
-                            taskId: parsed.taskId,
-                            type: 'progress',
-                            workerId: parsed.workerId,
-                            index: range.index,
-                            attempt,
-                        });
-                    });
-                    channel.postMessage({
-                        version: PIPELINE_VERSION,
-                        taskId: parsed.taskId,
-                        type: 'fragment',
-                        workerId: parsed.workerId,
-                        index: range.index,
-                        start: range.start,
-                        end: range.end,
-                        blob,
-                    });
-                }
-                channel.postMessage({
-                    version: PIPELINE_VERSION,
-                    taskId: parsed.taskId,
-                    type: 'worker-done',
-                    workerId: parsed.workerId,
-                });
-            } catch (error) {
-                channel.postMessage({
-                    version: PIPELINE_VERSION,
-                    taskId: parsed.taskId,
-                    type: 'worker-error',
-                    workerId: parsed.workerId,
-                    error: String(error && error.message || error),
-                });
-            }
-        };
-
-        try {
-            const list = await waitForMedia(45000);
-            if (!list.length) throw new Error('Медиаэлемент не найден');
-            channel.postMessage({
-                version: PIPELINE_VERSION,
-                taskId: parsed.taskId,
-                type: 'ready',
-                workerId: parsed.workerId,
-                nonce,
-                mediaCount: list.length,
-            });
-        } catch (error) {
-            channel.postMessage({
-                version: PIPELINE_VERSION,
-                taskId: parsed.taskId,
-                type: 'worker-error',
-                workerId: parsed.workerId,
-                error: String(error && error.message || error),
-            });
-        }
-    }
-
-    function workerUrl(taskId, workerId) {
-        const url = new URL(location.href);
-        url.searchParams.set(WORKER_PARAM, `${taskId}:${workerId}`);
-        return url.href;
+        throw error || new Error(`Фрагмент ${range.index + 1} не записан`);
     }
 
     function createPanel() {
         if (document.getElementById('happyCatchFragmentPipeline')) return null;
-
         const root = document.createElement('section');
         root.id = 'happyCatchFragmentPipeline';
         root.innerHTML = `
@@ -386,22 +312,21 @@
     }
 
     async function runCoordinator(panel, list) {
-        if (typeof BroadcastChannel !== 'function') throw new Error('BroadcastChannel не поддерживается');
-        const fields = (name) => panel.querySelector(`[data-field="${name}"]`);
-        const mediaIndex = Number(fields('media').value) || 0;
+        const field = (name) => panel.querySelector(`[data-field="${name}"]`);
+        const mediaIndex = Number(field('media').value) || 0;
         const media = list[mediaIndex];
         if (!media) throw new Error('Выбранное медиа не найдено');
         if (!Number.isFinite(media.duration) || media.duration <= 0) throw new Error('Не удалось определить длительность');
 
-        const start = clampNumber(fields('start').value, 0, media.duration, 0);
-        const end = clampNumber(fields('end').value, start + 0.1, media.duration, media.duration);
+        const start = clampNumber(field('start').value, 0, media.duration, 0);
+        const end = clampNumber(field('end').value, start + 0.1, media.duration, media.duration);
         const settings = {
-            chunkSeconds: clampNumber(fields('chunk').value, 15, 900, 120),
-            workers: Math.floor(clampNumber(fields('workers').value, 1, 6, 2)),
-            retries: Math.floor(clampNumber(fields('retries').value, 0, 3, 1)),
-            videoBits: Math.floor(clampNumber(fields('videoBits').value, 1, 24, 5) * 1000000),
-            audioBits: Math.floor(clampNumber(fields('audioBits').value, 64, 320, 160) * 1000),
-            transcode: fields('transcode').checked,
+            chunkSeconds: clampNumber(field('chunk').value, 15, 900, 120),
+            workers: Math.floor(clampNumber(field('workers').value, 1, 6, 2)),
+            retries: Math.floor(clampNumber(field('retries').value, 0, 3, 1)),
+            videoBits: Math.floor(clampNumber(field('videoBits').value, 1, 24, 5) * 1000000),
+            audioBits: Math.floor(clampNumber(field('audioBits').value, 64, 320, 160) * 1000),
+            transcode: field('transcode').checked,
             title: sanitizeFileName(document.title),
         };
         const ranges = buildRanges(start, end, settings.chunkSeconds);
@@ -409,14 +334,14 @@
         settings.workers = Math.min(settings.workers, ranges.length);
 
         const taskId = uniqueId();
-        const channel = new BroadcastChannel(`happy-catch:${taskId}`);
         const assignments = distributeRanges(ranges, settings.workers);
         const fragments = new Array(ranges.length);
-        const remoteDone = new Set();
-        const readyWorkers = new Set();
-        const boundNonce = new Map();
         const workerWindows = [];
-        const runtime = { cancelled: false, activeRecorder: null, workerMode: false };
+        const runtimes = Array.from({ length: settings.workers }, (_, index) => ({
+            cancelled: false,
+            activeRecorder: null,
+            remote: index !== 0,
+        }));
         let completed = 0;
 
         const status = panel.querySelector('.status');
@@ -428,90 +353,71 @@
         progress.value = 0;
 
         const report = (text) => { status.textContent = text; };
-        const receive = ({ data }) => {
-            if (!data || data.version !== PIPELINE_VERSION || data.taskId !== taskId) return;
-            if (data.type === 'ready' && data.workerId > 0 && !boundNonce.has(data.workerId)) {
-                boundNonce.set(data.workerId, data.nonce);
-                readyWorkers.add(data.workerId);
-                channel.postMessage({
-                    version: PIPELINE_VERSION,
-                    taskId,
-                    type: 'assign',
-                    workerId: data.workerId,
-                    nonce: data.nonce,
-                    mediaIndex,
-                    ranges: assignments[data.workerId],
-                    settings,
-                });
-                report(`Worker ${data.workerId + 1}/${settings.workers} подключён.`);
-                return;
-            }
-            if (data.type === 'fragment' && !fragments[data.index]) {
-                fragments[data.index] = data.blob;
-                completed++;
-                progress.value = completed / ranges.length;
-                report(`Получено ${completed}/${ranges.length}: фрагмент ${data.index + 1}.`);
-                return;
-            }
-            if (data.type === 'worker-done') remoteDone.add(data.workerId);
-            if (data.type === 'worker-error') {
-                remoteDone.add(data.workerId);
-                report(`Worker ${data.workerId + 1}: ${data.error}. Пропуски заберёт основной таб.`);
-            }
+        const accept = (range, blob, workerId) => {
+            if (fragments[range.index]) return;
+            fragments[range.index] = blob;
+            completed++;
+            progress.value = completed / ranges.length;
+            report(`Получено ${completed}/${ranges.length}: фрагмент ${range.index + 1}, вкладка ${workerId + 1}.`);
         };
-        channel.onmessage = receive;
 
         for (let workerId = 1; workerId < settings.workers; workerId++) {
-            const opened = window.open(workerUrl(taskId, workerId), `_happy_catch_${taskId}_${workerId}`);
-            if (opened) workerWindows.push(opened);
+            const opened = window.open(location.href, `_happy_catch_${taskId}_${workerId}`);
+            if (opened) workerWindows[workerId] = opened;
         }
 
         const cancel = () => {
-            runtime.cancelled = true;
-            channel.postMessage({ version: PIPELINE_VERSION, taskId, type: 'cancel' });
-            if (runtime.activeRecorder && runtime.activeRecorder.state !== 'inactive') runtime.activeRecorder.stop();
-            workerWindows.forEach((opened) => { try { opened.close(); } catch (_) {} });
+            runtimes.forEach((runtime) => {
+                runtime.cancelled = true;
+                if (runtime.activeRecorder && runtime.activeRecorder.state !== 'inactive') {
+                    try { runtime.activeRecorder.stop(); } catch (_) {}
+                }
+            });
+            workerWindows.forEach((opened) => { try { opened && opened.close(); } catch (_) {} });
         };
         stopButton.onclick = cancel;
 
-        try {
-            for (const range of assignments[0]) {
-                const blob = await recordWithRetry(media, range, settings, runtime, (attempt) => {
-                    report(`Основной таб: фрагмент ${range.index + 1}/${ranges.length}, попытка ${attempt}.`);
+        const runAssignment = async (workerId) => {
+            const runtime = runtimes[workerId];
+            let targetMedia = media;
+            if (workerId > 0) {
+                const opened = workerWindows[workerId];
+                if (!opened) throw new Error(`Вкладка ${workerId + 1} заблокирована браузером`);
+                targetMedia = await waitForWindowMedia(opened, mediaIndex);
+            }
+            for (const range of assignments[workerId]) {
+                const blob = await recordWithRetry(targetMedia, range, settings, runtime, (attempt) => {
+                    report(`Вкладка ${workerId + 1}: фрагмент ${range.index + 1}/${ranges.length}, попытка ${attempt}.`);
                 });
-                if (!fragments[range.index]) {
-                    fragments[range.index] = blob;
-                    completed++;
-                    progress.value = completed / ranges.length;
+                accept(range, blob, workerId);
+            }
+        };
+
+        try {
+            const results = await Promise.allSettled(
+                Array.from({ length: settings.workers }, (_, workerId) => runAssignment(workerId)),
+            );
+            results.forEach((result, workerId) => {
+                if (result.status === 'rejected' && !runtimes[workerId].cancelled) {
+                    report(`Вкладка ${workerId + 1}: ${String(result.reason && result.reason.message || result.reason)}. Пропуски заберёт основной таб.`);
                 }
-            }
+            });
 
-            const remoteDeadline = Date.now() + Math.max(60000, (end - start) * 2500);
-            while (!runtime.cancelled && completed < ranges.length && Date.now() < remoteDeadline) {
-                await sleep(300);
-            }
-
+            if (runtimes[0].cancelled) throw new Error('Захват отменён');
             const missing = ranges.filter((range) => !fragments[range.index]);
             for (const range of missing) {
-                if (runtime.cancelled) break;
                 report(`Повтор в основном табе: фрагмент ${range.index + 1}/${ranges.length}.`);
-                const blob = await recordWithRetry(media, range, settings, runtime);
-                fragments[range.index] = blob;
-                completed++;
-                progress.value = completed / ranges.length;
+                const blob = await recordWithRetry(media, range, settings, runtimes[0]);
+                accept(range, blob, 0);
             }
 
-            if (runtime.cancelled) throw new Error('Захват отменён');
             if (fragments.some((blob) => !blob)) throw new Error('Не все фрагменты записаны');
-
             report('Все фрагменты готовы. Передаю в FFmpeg на склейку…');
             postToFfmpeg(fragments, settings, taskId);
             progress.value = 1;
             report(`Передано ${fragments.length} фрагментов в строгом порядке. FFmpeg собирает итоговый файл.`);
         } finally {
-            channel.postMessage({ version: PIPELINE_VERSION, taskId, type: 'cancel' });
-            channel.close();
-            workerWindows.forEach((opened) => { try { opened.close(); } catch (_) {} });
+            workerWindows.forEach((opened) => { try { opened && opened.close(); } catch (_) {} });
             startButton.disabled = false;
             stopButton.disabled = true;
             stopButton.onclick = null;
@@ -519,12 +425,11 @@
     }
 
     async function bootCoordinator() {
-        const list = await waitForMedia(30000).catch(() => []);
+        const list = await waitForMedia(document, 30000).catch(() => []);
         if (!list.length) return;
         const panel = createPanel();
         if (!panel) return;
         fillMedia(panel, list);
-
         panel.querySelector('.close').onclick = () => panel.remove();
         panel.querySelector('[data-action="start"]').onclick = async () => {
             try {
@@ -537,9 +442,5 @@
         };
     }
 
-    if (workerToken) {
-        runWorker(workerToken).catch((error) => console.error('[Happy Catch] worker failed', error));
-    } else {
-        bootCoordinator().catch((error) => console.error('[Happy Catch] pipeline failed', error));
-    }
+    bootCoordinator().catch((error) => console.error('[Happy Catch] pipeline failed', error));
 })();

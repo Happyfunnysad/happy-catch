@@ -4,6 +4,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const Core = require('../core.js');
+const Strategy = require('../sweep-strategy.js');
 
 assert.deepStrictEqual(Core.makeSeekPositions(0, 23, 8), [0, 8, 16, 22.75]);
 assert.strictEqual(Core.sanitizeFileName(' bad:/name?  '), 'bad__name_');
@@ -57,12 +58,27 @@ const merged = Core.dedupeResources([
 ]);
 assert.strictEqual(merged[0].kind, 'segment');
 
+assert.strictEqual(Strategy.bufferedEnd([{ start: 0, end: 31.5 }], 8), 31.5);
+assert.deepStrictEqual(
+  Strategy.nextPosition({ cursor: 8, edge: 31.5, end: 100, fallbackStep: 8, stalls: 0 }),
+  { done: false, position: 31.42, usedBuffer: true },
+);
+assert.strictEqual(
+  Strategy.nextPosition({ cursor: 99.8, edge: 100, end: 100, fallbackStep: 8, stalls: 0 }).done,
+  true,
+);
+assert.strictEqual(Strategy.progress(10, 110, 60), 0.5);
+
 const sources = {};
-for (const file of ['service-worker.js', 'content-script.js', 'popup.js', 'assembler.js']) {
+for (const file of ['service-worker.js', 'content-script.js', 'popup.js', 'assembler.js', 'sweep-strategy.js']) {
   const source = fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
   sources[file] = source;
   new Function(source);
 }
+
+assert.match(sources['content-script.js'], /Strategy\.bufferedEnd/, 'sweep must follow buffered ranges');
+assert.match(sources['content-script.js'], /seenPerformance/, 'resource timing entries must be sent only once');
+assert.doesNotMatch(sources['content-script.js'], /makeSeekPositions\(/, 'fixed interval sweep must not be the primary path');
 
 assert.match(sources['service-worker.js'], /case 'SAVE_OUTPUT'/, 'background download entrypoint is missing');
 assert.match(sources['service-worker.js'], /case 'GET_DOWNLOAD_STATUS'/, 'download status endpoint is missing');
@@ -81,5 +97,10 @@ assert.match(sources['assembler.js'], /type: 'SAVE_OUTPUT'/, 'assembler must req
 assert.match(sources['assembler.js'], /type: 'GET_DOWNLOAD_STATUS'/, 'assembler must wait for the real download state');
 assert.match(sources['assembler.js'], /response\.state === 'complete'/, 'assembly must not report success before download completion');
 
-JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8'));
+const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8'));
+assert.strictEqual(manifest.background.service_worker, 'service-worker.js');
+assert.deepStrictEqual(
+  manifest.content_scripts[0].js,
+  ['core.js', 'sweep-strategy.js', 'content-script.js'],
+);
 console.log('seek fragment core: ok');

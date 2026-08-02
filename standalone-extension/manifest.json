@@ -1,15 +1,15 @@
 {
   "manifest_version": 3,
   "name": "Seek Fragment Capture",
-  "version": "0.3.1",
-  "description": "Перематывает HTML5-плеер, перехватывает реальные сетевые фрагменты и собирает файл.",
+  "version": "0.4.0",
+  "description": "Перематывает HTML5-плеер по границе буфера, перехватывает реальные сетевые фрагменты и собирает файл.",
   "minimum_chrome_version": "109",
   "action": {
     "default_title": "Seek Fragment Capture",
     "default_popup": "popup.html"
   },
   "background": {
-    "service_worker": "service-worker.js"
+    "service_worker": "background-entry.js"
   },
   "permissions": [
     "tabs",
@@ -25,7 +25,7 @@
   "content_scripts": [
     {
       "matches": ["http://*/*", "https://*/*"],
-      "js": ["core.js", "content-script.js"],
+      "js": ["core.js", "sweep-strategy.js", "content-script.js"],
       "run_at": "document_idle",
       "all_frames": true
     }

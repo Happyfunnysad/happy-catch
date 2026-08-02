@@ -252,6 +252,42 @@ async function finishCapture(session, error) {
   await chrome.tabs.create({ url: chrome.runtime.getURL(`assembler.html?job=${encodeURIComponent(job.id)}`) });
 }
 
+function validateDownloadUrl(value) {
+  const url = String(value || '');
+  if (!/^(blob:|data:|https?:)/i.test(url)) throw new Error('Недопустимый URL готового файла');
+  return url;
+}
+
+async function startBrowserDownload(message) {
+  const url = validateDownloadUrl(message.url);
+  const filename = Core.sanitizeFileName(message.filename || 'video.bin');
+  const downloadId = await chrome.downloads.download({
+    url,
+    filename,
+    saveAs: false,
+    conflictAction: 'uniquify',
+  });
+  if (!Number.isInteger(downloadId)) throw new Error('Chrome не вернул ID загрузки');
+  return { downloadId };
+}
+
+async function getBrowserDownloadStatus(downloadId) {
+  const id = Number(downloadId);
+  if (!Number.isInteger(id)) throw new Error('Некорректный ID загрузки');
+  const [item] = await chrome.downloads.search({ id });
+  if (!item) {
+    return { state: 'missing', downloadId: id };
+  }
+  return {
+    state: item.state || 'in_progress',
+    downloadId: id,
+    error: item.error || '',
+    bytesReceived: Number(item.bytesReceived || 0),
+    totalBytes: Number(item.totalBytes || 0),
+    filename: item.filename || '',
+  };
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
     switch (message?.type) {
@@ -324,11 +360,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ ok: true });
         break;
       }
+      case 'SAVE_OUTPUT': {
+        const result = await startBrowserDownload(message);
+        sendResponse({ ok: true, ...result });
+        break;
+      }
+      case 'GET_DOWNLOAD_STATUS': {
+        const result = await getBrowserDownloadStatus(message.downloadId);
+        sendResponse({ ok: true, ...result });
+        break;
+      }
       case 'ASSEMBLY_DONE': {
         const session = [...sessions.values()].find((item) => item.id === message.jobId);
         if (session) session.status = message.ok ? 'done' : 'error';
         if (session && !message.ok) session.error = message.error || 'Ошибка сборки';
-        await chrome.storage.local.remove(`captureJob:${message.jobId}`);
+        if (message.ok) await chrome.storage.local.remove(`captureJob:${message.jobId}`);
         sendResponse({ ok: true });
         break;
       }

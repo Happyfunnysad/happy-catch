@@ -10,7 +10,7 @@
   <main>
     <header>
       <h1>Seek Fragment Capture</h1>
-      <p>Перемотка плеера → перехват сетевых фрагментов → сборка файла</p>
+      <p>Граница буфера → перехват сетевых фрагментов → сборка файла</p>
     </header>
 
     <label>Плеер
@@ -20,10 +20,10 @@
     <div class="grid">
       <label>Начало, сек <input id="start" type="number" min="0" step="1" value="0"></label>
       <label>Конец, сек <input id="end" type="number" min="0" step="1"></label>
-      <label>Шаг перемотки, сек <input id="step" type="number" min="1" max="120" step="1" value="8"></label>
-      <label>Мин. ожидание, мс <input id="minDwell" type="number" min="250" max="10000" step="100" value="700"></label>
-      <label>Тишина сети, мс <input id="quiet" type="number" min="250" max="10000" step="100" value="700"></label>
-      <label>Макс. ожидание, мс <input id="maxDwell" type="number" min="1000" max="30000" step="500" value="4000"></label>
+      <label>Резервный шаг, сек <input id="step" type="number" min="1" max="120" step="1" value="8"></label>
+      <label>Мин. ожидание, мс <input id="minDwell" type="number" min="250" max="10000" step="50" value="350"></label>
+      <label>Тишина сети, мс <input id="quiet" type="number" min="250" max="10000" step="50" value="350"></label>
+      <label>Макс. ожидание, мс <input id="maxDwell" type="number" min="1000" max="30000" step="250" value="2500"></label>
     </div>
 
     <div class="actions">
@@ -34,7 +34,7 @@
 
     <progress id="progress" max="1" value="0"></progress>
     <div id="status" class="status">Ищу HTML5-плеер…</div>
-    <div class="note">Расширение не записывает экран. Оно заставляет плеер запросить фрагменты и собирает реальные HTTP-запросы.</div>
+    <div class="note">Основной переход идёт к краю уже загруженного буфера. Резервный шаг используется только если плеер не сообщает buffered-диапазоны.</div>
   </main>
   <script src="popup.js"></script>
 </body>

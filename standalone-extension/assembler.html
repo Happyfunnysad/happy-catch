@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Сборка видео</title>
+  <link rel="stylesheet" href="assembler.css">
+</head>
+<body>
+  <main>
+    <h1>Сборка перехваченных фрагментов</h1>
+    <p id="summary">Загружаю задание…</p>
+    <progress id="progress" max="1" value="0"></progress>
+    <pre id="log"></pre>
+    <div class="actions">
+      <button id="retry" hidden>Повторить</button>
+      <button id="close">Закрыть</button>
+    </div>
+  </main>
+  <script src="core.js"></script>
+  <script src="assembler.js"></script>
+</body>
+</html>

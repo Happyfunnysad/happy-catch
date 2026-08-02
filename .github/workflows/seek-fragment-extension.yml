@@ -1,0 +1,29 @@
+name: Seek fragment extension
+
+on:
+  push:
+    branches: [agent/standalone-fragment-extension]
+  pull_request:
+    paths:
+      - standalone-extension/**
+      - .github/workflows/seek-fragment-extension.yml
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-pack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node standalone-extension/test/core.test.js
+      - run: |
+          cd standalone-extension
+          zip -r ../seek-fragment-capture.zip . -x 'test/*'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: seek-fragment-capture
+          path: seek-fragment-capture.zip

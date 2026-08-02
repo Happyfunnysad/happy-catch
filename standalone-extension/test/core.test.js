@@ -57,10 +57,29 @@ const merged = Core.dedupeResources([
 ]);
 assert.strictEqual(merged[0].kind, 'segment');
 
+const sources = {};
 for (const file of ['service-worker.js', 'content-script.js', 'popup.js', 'assembler.js']) {
   const source = fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
+  sources[file] = source;
   new Function(source);
 }
+
+assert.match(sources['service-worker.js'], /case 'SAVE_OUTPUT'/, 'background download entrypoint is missing');
+assert.match(sources['service-worker.js'], /case 'GET_DOWNLOAD_STATUS'/, 'download status endpoint is missing');
+assert.match(sources['service-worker.js'], /chrome\.downloads\.download\(/, 'service worker must own chrome.downloads');
+assert.match(
+  sources['service-worker.js'],
+  /if \(message\.ok\) await chrome\.storage\.local\.remove\(`captureJob:\$\{message\.jobId\}`\)/,
+  'failed assembly jobs must remain retryable',
+);
+assert.doesNotMatch(
+  sources['assembler.js'],
+  /chrome\.downloads\.download\(/,
+  'assembler must not bypass the service-worker download boundary',
+);
+assert.match(sources['assembler.js'], /type: 'SAVE_OUTPUT'/, 'assembler must request a background save');
+assert.match(sources['assembler.js'], /type: 'GET_DOWNLOAD_STATUS'/, 'assembler must wait for the real download state');
+assert.match(sources['assembler.js'], /response\.state === 'complete'/, 'assembly must not report success before download completion');
 
 JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8'));
 console.log('seek fragment core: ok');

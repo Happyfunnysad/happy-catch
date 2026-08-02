@@ -83,8 +83,11 @@
           requestHeaders: previous.requestHeaders?.length ? previous.requestHeaders : resource.requestHeaders,
           responseHeaders: previous.responseHeaders?.length ? previous.responseHeaders : resource.responseHeaders,
           contentType: previous.contentType || resource.contentType,
+          contentLength: previous.contentLength || resource.contentLength,
           statusCode: previous.statusCode || resource.statusCode,
         });
+        const strongerKind = resource.kind && resource.kind !== 'other' ? resource.kind : classifyResource(previous);
+        if (strongerKind !== 'other') previous.kind = strongerKind;
       }
     }
     return [...map.values()];

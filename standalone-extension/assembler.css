@@ -1,0 +1,4 @@
+:root{color-scheme:dark;font:14px/1.45 system-ui,sans-serif;background:#0f0f0f;color:#eee}
+body{margin:0;background:#0f0f0f}
+main{max-width:780px;margin:40px auto;padding:24px;border:1px solid #333;border-radius:12px;background:#151515;box-shadow:0 15px 50px #0008}
+h1{font-size:22px;margin:0 0 8px}p{color:#aaa;margin:0 0 16px}progress{width:100%;height:14px}pre{min-height:260px;max-height:55vh;overflow:auto;padding:14px;border:1px solid #333;border-radius:8px;background:#0d0d0d;color:#b8c7a5;white-space:pre-wrap}.actions{display:flex;gap:8px;margin-top:14px}button{padding:8px 13px;border:1px solid #555;border-radius:7px;background:#242424;color:#eee;cursor:pointer}

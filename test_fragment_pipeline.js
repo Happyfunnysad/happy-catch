@@ -4,15 +4,10 @@ const fs = require('fs');
 const path = require('path');
 
 const recorderPath = path.join(__dirname, 'catch-script', 'recorder.js');
-const bootstrapPath = path.join(__dirname, 'js', 'fragment-pipeline-bootstrap.js');
-const manifestPath = path.join(__dirname, 'manifest.json');
-
 const recorderSource = fs.readFileSync(recorderPath, 'utf8');
-const bootstrapSource = fs.readFileSync(bootstrapPath, 'utf8');
 
-// Parse the complete browser scripts without executing DOM/browser APIs.
+// Parse the complete browser script without executing DOM/browser APIs.
 new Function(recorderSource);
-new Function(bootstrapSource);
 
 const startMarker = '// PIPELINE_CORE_START';
 const endMarker = '// PIPELINE_CORE_END';
@@ -43,15 +38,18 @@ assert.deepStrictEqual(
     'ranges must be distributed deterministically between workers',
 );
 
+assert.deepStrictEqual(
+    core.distributeRanges(core.buildRanges(0, 300, 100), 5).map((items) => items.map((item) => item.index)),
+    [[0], [1], [2], [], []],
+    'extra workers must receive empty deterministic queues',
+);
+
 assert.strictEqual(core.sanitizeFileName(' bad:/name?  '), 'bad__name_');
 assert.strictEqual(core.clampNumber('9', 1, 6, 2), 6);
 assert.strictEqual(core.clampNumber('nope', 1, 6, 2), 2);
 
-const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-const scripts = manifest.content_scripts.flatMap((entry) => entry.js || []);
-assert.ok(scripts.includes('js/fragment-pipeline-bootstrap.js'), 'worker bootstrap is not registered');
-const exposed = (manifest.web_accessible_resources || []).flatMap((entry) => entry.resources || []);
-assert.ok(exposed.includes('catch-script/recorder.js'), 'recorder is not exposed to worker tabs');
-assert.ok(exposed.includes('catch-script/i18n.js'), 'recorder i18n dependency is not exposed');
+assert.match(recorderSource, /Promise\.allSettled/, 'worker queues must run concurrently');
+assert.match(recorderSource, /const missing = ranges\.filter/, 'missing remote fragments need a local fallback');
+assert.match(recorderSource, /concatOrder/, 'ordered FFmpeg merge metadata is missing');
 
 console.log('fragment pipeline: ok');

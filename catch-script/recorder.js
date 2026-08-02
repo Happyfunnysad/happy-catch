@@ -166,8 +166,8 @@
             media.loop = false;
             media.pause();
             media.playbackRate = 1;
-            // Мутирование разрешает autoplay в фоновой вкладке. captureStream
-            // продолжает отдавать аудиодорожку, меняется только локальный вывод.
+            // Muting enables autoplay in background tabs. Per the capture-from-
+            // element spec this does not mute the captured audio track.
             media.muted = true;
             await seekMedia(media, range.start);
 
@@ -311,6 +311,11 @@
         setTimeout(() => urls.forEach((url) => URL.revokeObjectURL(url)), 10 * 60 * 1000);
     }
 
+    function notifyClosed() {
+        globalThis.__happyCatchFragmentPipelineLoaded = false;
+        window.postMessage({ action: 'catCatchCloseScript', script: 'recorder.js' }, location.origin);
+    }
+
     async function runCoordinator(panel, list) {
         const field = (name) => panel.querySelector(`[data-field="${name}"]`);
         const mediaIndex = Number(field('media').value) || 0;
@@ -426,14 +431,25 @@
 
     async function bootCoordinator() {
         const list = await waitForMedia(document, 30000).catch(() => []);
-        if (!list.length) return;
         const panel = createPanel();
         if (!panel) return;
         fillMedia(panel, list);
-        panel.querySelector('.close').onclick = () => panel.remove();
+        if (!list.length) {
+            panel.querySelector('.status').textContent = 'Медиа не найдено. Запустите recorder после появления плеера.';
+            panel.querySelector('[data-action="start"]').disabled = true;
+        }
+
+        panel.querySelector('.close').onclick = () => {
+            const stopButton = panel.querySelector('[data-action="stop"]');
+            if (!stopButton.disabled) stopButton.click();
+            panel.remove();
+            notifyClosed();
+        };
         panel.querySelector('[data-action="start"]').onclick = async () => {
             try {
-                await runCoordinator(panel, mediaElements());
+                const current = mediaElements();
+                fillMedia(panel, current);
+                await runCoordinator(panel, current);
             } catch (error) {
                 panel.querySelector('.status').textContent = String(error && error.message || error);
                 panel.querySelector('[data-action="start"]').disabled = false;

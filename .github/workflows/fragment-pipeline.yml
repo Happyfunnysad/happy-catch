@@ -1,0 +1,24 @@
+name: Fragment capture pipeline
+
+on:
+  push:
+    branches:
+      - agent/fragment-capture-pipeline
+  pull_request:
+    paths:
+      - catch-script/recorder.js
+      - test_fragment_pipeline.js
+      - .github/workflows/fragment-pipeline.yml
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node test_fragment_pipeline.js
